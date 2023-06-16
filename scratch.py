@@ -1,6 +1,6 @@
 import seaborn as sns
 import xgboost as xgb
-from forust.model import LogLoss, Tree, XGBoost, weight
+from scratchboost.model import LogLoss, Tree, Booster, weight
 import numpy as np
 from typing import Tuple
 
@@ -16,8 +16,14 @@ ll = LogLoss()
 
 df = sns.load_dataset("titanic")
 # Need to add NA support
-X = df.select_dtypes("number").drop(columns="survived") #[["age"]].mul(-1) #.fillna(0)
+X = df.select_dtypes("number").drop(columns="survived").fillna(0).to_numpy() #[["age"]].mul(-1) #.fillna(0)
 y = df["survived"]
+
+from scratchboost.utils import bin_data
+b, c = bin_data(X, 10)
+
+X[:,4] <= c[4][b[:,4]]
+
 
 # init_preds = np.repeat(0.5, y.shape)
 # g = ll.grad(y, init_preds)
@@ -35,7 +41,7 @@ y = df["survived"]
 
 w = np.ones(y.shape)
 # # w[X["pclass"].eq(2)] = 4
-m = XGBoost(
+m = Booster(
     iterations=10,
     learning_rate=0.3,
     max_depth=5,
@@ -90,21 +96,21 @@ xmod.fit(X.fillna(0), y)
 print(xmod.get_booster().get_dump(with_stats=True)[0])
 print(xmod.predict(X, output_margin=True)[0:10])
 
-# mx = XGBClassifier(seed=123,
-#         objective="binary:logitraw",
-#         tree_method="exact", #"approx", # "hist",
-#         eval_metric="auc",
-#         reg_lambda=1,
-#         gamma=0,
-#         min_child_weight=1,
-#         max_leaves=0,
-#         max_depth=5,
-#         n_estimators=10)
-# mx.fit(X, y, sample_weight=w)
-# xp = mx.predict(X, output_margin=True)
-# print(xp[0:10])
+mx = XGBClassifier(seed=123,
+        objective="binary:logitraw",
+        tree_method="exact", #"approx", # "hist",
+        eval_metric="auc",
+        reg_lambda=1,
+        gamma=0,
+        min_child_weight=1,
+        max_leaves=0,
+        max_depth=5,
+        n_estimators=10)
+mx.fit(X, y, sample_weight=w)
+xp = mx.predict(X, output_margin=True)
+print(xp[0:10])
 
-# np.all(np.isclose(mp, xp, rtol=0.00001))
+np.all(np.isclose(mp, xp, rtol=0.00001))
 
 
 # def log_loss(predt: np.ndarray, dtrain: xgb.DMatrix) -> Tuple[np.ndarray, np.ndarray]:

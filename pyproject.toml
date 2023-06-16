@@ -16,7 +16,7 @@ keywords = [
   "tree model",
   "decision tree",
 ]
-dependencies = ["pandas>=1.5.2", "numpy>=1.24.0"]
+dependencies = ["pandas>=1.5.2", "numpy>=1.24.0", "seaborn>=0.11.2"]
 
 [project.optional-dependencies]
-test = ["xgboost==1.6.1", "pytest", "black"]
+test = ["xgboost==1.6.1", "pytest", "black", "isort"]

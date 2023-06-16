@@ -1,8 +1,13 @@
 from __future__ import annotations
-from optparse import Option
-from typing import Any, Optional, Tuple, List, Type
-import numpy as np
+
 from abc import ABC, abstractstaticmethod
+from optparse import Option
+from typing import Any, List, Optional, Tuple, Type
+
+import numpy as np
+import numpy.typing as npt
+
+from scratchboost.histogram import HistogramData
 
 # https://arxiv.org/pdf/1603.02754.pdf
 # https://github.com/Ekeany/XGBoost-From-Scratch/blob/master/XGBoost.py
@@ -46,7 +51,7 @@ class LogLoss(LossABC):
         return y_hat * (1 - y_hat)
 
 
-class XGBoost:
+class Booster:
     def __init__(
         self,
         iterations: int = 10,
@@ -58,6 +63,7 @@ class XGBoost:
         min_leaf_weight: float = 0,
         learning_rate: float = 0.3,
         base_score: float = 0.5,
+        nbins: int = 250,
     ):
         self.obj = objective()
         self.iterations = iterations
@@ -68,18 +74,22 @@ class XGBoost:
         self.max_leaves = max_leaves
         self.max_depth = max_depth
         self.base_score = base_score
+        self.nbins = nbins
         self.trees_: List[Tree] = []
 
     def fit(
-        self, X: np.ndarray, y: np.ndarray, sample_weight: Optional[np.ndarray] = None
-    ) -> XGBoost:
+        self,
+        X: npt.NDArray[np.int_],
+        y: np.ndarray,
+        sample_weight: Optional[np.ndarray] = None,
+    ) -> Booster:
         if sample_weight is None:
             sample_weight_ = np.ones(y.shape)
         else:
             sample_weight_ = sample_weight
         preds_ = np.repeat(self.base_score, repeats=X.shape[0])
-        grad_ = self.obj.grad(y=y, y_hat=preds_) * sample_weight_
-        hess_ = self.obj.hess(y=y, y_hat=preds_) * sample_weight_
+        gradient_ = self.obj.grad(y=y, y_hat=preds_) * sample_weight_
+        hessian_ = self.obj.hess(y=y, y_hat=preds_) * sample_weight_
         for _ in range(self.iterations):
             t = Tree(
                 l2=self.l2,
@@ -89,13 +99,13 @@ class XGBoost:
                 min_leaf_weight=self.min_leaf_weight,
                 learning_rate=self.learning_rate,
             )
-            self.trees_.append(t.fit(X=X, grad=grad_, hess=hess_))
+            self.trees_.append(t.fit(X=X, gradient=gradient_, hessian=hessian_))
             preds_ += t.predict(X=X)
-            grad_ = self.obj.grad(y=y, y_hat=preds_) * sample_weight_
-            hess_ = self.obj.hess(y=y, y_hat=preds_) * sample_weight_
+            gradient_ = self.obj.grad(y=y, y_hat=preds_) * sample_weight_
+            hessian_ = self.obj.hess(y=y, y_hat=preds_) * sample_weight_
         return self
 
-    def predict(self, X: np.ndarray) -> np.ndarray:
+    def predict(self, X: npt.NDArray[np.int_]) -> np.ndarray:
         preds_ = np.repeat(self.base_score, X.shape[0])
         for t in self.trees_:
             preds_ += t.predict(X)
@@ -147,25 +157,27 @@ class Tree:
             else:
                 node_idx = n.right_child_
 
-    def predict(self, X: np.ndarray) -> np.ndarray:
+    def predict(self, X: npt.NDArray[np.int_]) -> np.ndarray:
         preds_ = np.ndarray((X.shape[0],))
         for i in range(X.shape[0]):
             preds_[i] = self.predict_row(X[i, :])
         return preds_
 
-    def fit(self, X: np.ndarray, grad: np.ndarray, hess: np.ndarray) -> Tree:
+    def fit(
+        self, X: npt.NDArray[np.int_], gradient: np.ndarray, hessian: np.ndarray
+    ) -> Tree:
         self.nodes_ = []
-        grad_sum = grad.sum()
-        hess_sum = hess.sum()
-        root_gain = self.gain(grad_sum=grad_sum, hess_sum=hess_sum)
-        root_weight = self.weight(grad_sum=grad_sum, hess_sum=hess_sum)
+        gradient_sum = gradient.sum()
+        hessian_sum = hessian.sum()
+        root_gain = self.gain(gradient_sum=gradient_sum, hessian_sum=hessian_sum)
+        root_weight = self.weight(gradient_sum=gradient_sum, hessian_sum=hessian_sum)
         root_node = TreeNode(
             num=0,
             node_idxs=np.arange(X.shape[0]),
             depth=0,
             weight_value=root_weight,
             gain_value=root_gain,
-            cover_value=hess_sum,
+            cover_value=hessian_sum,
         )
         self.nodes_.append(root_node)
         n_leaves = 1
@@ -196,8 +208,8 @@ class Tree:
             split_info = self.best_split(
                 node=n,
                 X=X,
-                grad=grad,
-                hess=hess,
+                gradient=gradient,
+                hessian=hessian,
             )
             # If this is None, this means there
             # are no more valid nodes.
@@ -239,16 +251,16 @@ class Tree:
     def best_split(
         self,
         node: TreeNode,
-        X: np.ndarray,
-        grad: np.ndarray,
-        hess: np.ndarray,
+        X: npt.NDArray[np.int_],
+        gradient: np.ndarray,
+        hessian: np.ndarray,
     ) -> Optional[SplitInfo]:
         """
         Find the best split for this node out of all the features.
         """
         X_ = X[node.node_idxs, :]
-        grad_ = grad[node.node_idxs]
-        hess_ = hess[node.node_idxs]
+        gradient_ = gradient[node.node_idxs]
+        hessian_ = hessian[node.node_idxs]
 
         # Split info
         best_gain = -np.inf
@@ -259,8 +271,8 @@ class Tree:
                 node=node,
                 X=X_,
                 feature=f,
-                grad=grad_,
-                hess=hess_,
+                gradient=gradient_,
+                hessian=hessian_,
             )
 
             if split_info is None:
@@ -274,10 +286,10 @@ class Tree:
     def best_feature_split(
         self,
         node: TreeNode,
-        X: np.ndarray,
+        X: npt.NDArray[np.int_],
         feature: int,
-        grad: np.ndarray,
-        hess: np.ndarray,
+        gradient: np.ndarray,
+        hessian: np.ndarray,
     ) -> Optional[SplitInfo]:
         """
         Find the best split for a given feature, if it is
@@ -293,8 +305,8 @@ class Tree:
         for v in split_vals[1:]:
             mask = x < v
             lidxs, ridxs = node.node_idxs[mask], node.node_idxs[~mask]
-            lgs, lhs = grad[mask].sum(), hess[mask].sum()
-            rgs, rhs = grad[~mask].sum(), hess[~mask].sum()
+            lgs, lhs = gradient[mask].sum(), hessian[mask].sum()
+            rgs, rhs = gradient[~mask].sum(), hessian[~mask].sum()
             # Don't even consider this if the min_leaf_weight
             # parameter is violated.
             if np.min([lhs, rhs]) < self.min_leaf_weight:
@@ -312,30 +324,30 @@ class Tree:
                     split_value=v,
                     left_gain=l_gain,
                     left_cover=lhs,
-                    left_weight=self.weight(grad_sum=lgs, hess_sum=lhs),
+                    left_weight=self.weight(gradient_sum=lgs, hessian_sum=lhs),
                     left_idxs=lidxs,
                     right_gain=r_gain,
                     right_cover=rhs,
-                    right_weight=self.weight(grad_sum=rgs, hess_sum=rhs),
+                    right_weight=self.weight(gradient_sum=rgs, hessian_sum=rhs),
                     right_idxs=ridxs,
                 )
         return split_info
 
     def cover(
         self,
-        hess: np.ndarray,
+        hessian: np.ndarray,
     ) -> float:
-        return hess.sum()
+        return hessian.sum()
 
     def gain(
         self,
-        grad_sum: float,
-        hess_sum: float,
+        gradient_sum: float,
+        hessian_sum: float,
     ) -> float:
-        return (grad_sum**2) / (hess_sum + self.l2)
+        return (gradient_sum**2) / (hessian_sum + self.l2)
 
-    def weight(self, grad_sum: float, hess_sum: float) -> float:
-        return -1 * (grad_sum / (hess_sum + self.l2)) * self.learning_rate
+    def weight(self, gradient_sum: float, hessian_sum: float) -> float:
+        return -1 * (gradient_sum / (hessian_sum + self.l2)) * self.learning_rate
 
 
 from dataclasses import dataclass
@@ -385,6 +397,7 @@ class TreeNode:
         self.split_gain_: Optional[float] = None
         self.left_child_: Optional[int] = None
         self.right_child_: Optional[int] = None
+        self.histograms: Optional[HistogramData] = None
 
     def __repr__(self) -> str:
         if self.is_leaf:
@@ -433,15 +446,15 @@ class TreeNode:
 def split_gain(
     left_mask: np.ndarray,
     right_mask: np.ndarray,
-    grad: np.ndarray,
-    hess: np.ndarray,
+    gradient: np.ndarray,
+    hessian: np.ndarray,
     l2: float,
     gamma: float,
 ) -> float:
-    gl = grad[left_mask].sum()
-    gr = grad[right_mask].sum()
-    hl = hess[left_mask].sum()
-    hr = hess[right_mask].sum()
+    gl = gradient[left_mask].sum()
+    gr = gradient[right_mask].sum()
+    hl = hessian[left_mask].sum()
+    hr = hessian[right_mask].sum()
     l = (gl**2) / (hl + l2)
     r = (gr**2) / (hr + l2)
     lr = ((gl + gr) ** 2) / (hl + hr + l2)
@@ -452,17 +465,17 @@ def missing_gain(
     left_mask: np.ndarray,
     right_mask: np.ndarray,
     missing_mask: np.ndarray,
-    grad: np.ndarray,
-    hess: np.ndarray,
+    gradient: np.ndarray,
+    hessian: np.ndarray,
     l2: float,
     gamma: float,
 ) -> Tuple[float, float]:
-    gl = grad[left_mask].sum()
-    gr = grad[right_mask].sum()
-    gm = grad[missing_mask].sum()
-    hl = hess[left_mask].sum()
-    hr = hess[right_mask].sum()
-    hm = hess[missing_mask].sum()
+    gl = gradient[left_mask].sum()
+    gr = gradient[right_mask].sum()
+    gm = gradient[missing_mask].sum()
+    hl = hessian[left_mask].sum()
+    hr = hessian[right_mask].sum()
+    hm = hessian[missing_mask].sum()
     l = (gl**2) / (hl + l2)
     lm = ((gl + gm) ** 2) / (hl + hm + l2)
     r = (gr**2) / (hr + l2)
@@ -474,8 +487,8 @@ def missing_gain(
 
 
 def weight(
-    grad: np.ndarray,
-    hess: np.ndarray,
+    gradient: np.ndarray,
+    hessian: np.ndarray,
     l2: float,
 ) -> float:
-    return -1 * (grad.sum() / (hess.sum() + l2))
+    return -1 * (gradient.sum() / (hessian.sum() + l2))
