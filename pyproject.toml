@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scratchboost"
+authors = [{ name = "James Inlow" }]
+version = "0.1.0"
+description = "Small scratch implemntation of the XGBoost algorithm"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "LICENSE" }
+keywords = [
+  "machine learning",
+  "xgboost",
+  "tree model",
+  "decision tree",
+]
+dependencies = ["pandas>=1.5.2", "numpy>=1.24.0"]
+
+[project.optional-dependencies]
+test = ["xgboost==1.6.1", "pytest", "black"]

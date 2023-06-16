@@ -55,7 +55,7 @@ class XGBoost:
         gamma: float = 0,
         max_leaves: int = int(1e9),
         max_depth: int = 15,
-        min_leaf_weight: float = 0,        
+        min_leaf_weight: float = 0,
         learning_rate: float = 0.3,
         base_score: float = 0.5,
     ):
@@ -70,7 +70,9 @@ class XGBoost:
         self.base_score = base_score
         self.trees_: List[Tree] = []
 
-    def fit(self, X: np.ndarray, y: np.ndarray, sample_weight: Optional[np.ndarray] = None) -> XGBoost:
+    def fit(
+        self, X: np.ndarray, y: np.ndarray, sample_weight: Optional[np.ndarray] = None
+    ) -> XGBoost:
         if sample_weight is None:
             sample_weight_ = np.ones(y.shape)
         else:
@@ -112,7 +114,7 @@ class Tree:
         gamma: float = 0,
         max_leaves: int = int(1e9),
         max_depth: int = 15,
-        min_leaf_weight: float = 0,        
+        min_leaf_weight: float = 0,
         learning_rate: float = 0.3,
     ):
         self.l2 = l2
@@ -140,7 +142,7 @@ class Tree:
             n = self.nodes_[node_idx]
             if n.is_leaf:
                 return n.weight_value
-            if x_row[n.split_feature_] < n.split_value_: # type: ignore
+            if x_row[n.split_feature_] < n.split_value_:  # type: ignore
                 node_idx = n.left_child_
             else:
                 node_idx = n.right_child_
