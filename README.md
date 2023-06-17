@@ -1,4 +1,5 @@
-# Scratch Implementation
+# `scratchboost`
+***A Scratch Implementation of XGBoost***
 This is a small example of XGBoost built mainly using numpy.
 
 ## Testing it out
