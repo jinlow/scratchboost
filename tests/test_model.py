@@ -29,7 +29,7 @@ def test_results(X_y: tuple[np.ndarray, np.ndarray]) -> None:
     )
     xgb_booster.fit(X, y)
     xpreds = xgb_booster.predict(X, output_margin=True)
-    np.allclose(bpreds, xpreds)
+    assert np.allclose(bpreds, xpreds)
 
 
 
