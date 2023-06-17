@@ -14,6 +14,7 @@ booster = Booster(
     l2=1,
     min_leaf_weight=1,
     gamma=0,
+    nbins=None,
 )
 booster.fit(X, y)
 bpreds = booster.predict(X)
