@@ -59,7 +59,7 @@ class TreeNode:
 
     @property
     def is_leaf(self):
-        return hasattr(self, "split_feature_")
+        return not hasattr(self, "split_feature_")
 
     def get_next_node(self, value: float):
         if value < self.split_value_:

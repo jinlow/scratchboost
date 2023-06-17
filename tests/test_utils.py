@@ -9,4 +9,4 @@ def test_binning(nbins: int, X_y: tuple[np.ndarray, np.ndarray]) -> None:
     b, c = bin_data(X, nbins)
 
     for i in range(X.shape[1]):
-        assert all(X[:,i] <= c[i][b[:,i]])
+        assert all(X[:,i] < c[i][b[:,i]])

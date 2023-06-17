@@ -51,7 +51,7 @@ def bin_data(
         f = X[:, i]
         max_ = f.max()
         p = np.append(
-            np.unique(np.quantile(X[:, i], np.linspace(0, 1, num=nbins))), np.inf
+            np.unique(np.quantile(X[:, i], np.linspace(0, 1, num=nbins)))[1:], np.inf
         )
         XB[:, i] = np.digitize(f, p, right=False)
         cuts_.append(p)

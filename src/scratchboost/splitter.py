@@ -109,7 +109,7 @@ class HistogramSplitter(Splitter):
                 split_info = SplitInfo(
                     split_gain=split_gain,
                     split_feature=feature,
-                    split_value=cuts[i + 1],
+                    split_value=cuts[i],
                     split_index=i + 1,
                     left_gain=left_gain,
                     left_cover=left_hessian,
