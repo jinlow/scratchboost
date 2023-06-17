@@ -1,7 +1,9 @@
 from __future__ import annotations
-from scratchboost import Booster
-import xgboost as xgb
+
 import numpy as np
+import xgboost as xgb
+
+from scratchboost import Booster
 
 
 def test_results(X_y: tuple[np.ndarray, np.ndarray]) -> None:
@@ -13,7 +15,7 @@ def test_results(X_y: tuple[np.ndarray, np.ndarray]) -> None:
         l2=1,
         min_leaf_weight=1,
         gamma=0,
-        nbins=500
+        nbins=None,
     )
     booster.fit(X, y)
     bpreds = booster.predict(X)
@@ -32,4 +34,5 @@ def test_results(X_y: tuple[np.ndarray, np.ndarray]) -> None:
     )
     xgb_booster.fit(X, y)
     xpreds = xgb_booster.predict(X, output_margin=True)
+    print(xgb_booster.get_booster().get_dump(with_stats=True)[0][0:200])
     assert np.allclose(bpreds, xpreds)

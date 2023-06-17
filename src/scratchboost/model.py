@@ -2,16 +2,16 @@ from __future__ import annotations
 
 from abc import ABC, abstractstaticmethod
 from optparse import Option
-from typing import Any, List, Optional, Tuple, Type, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Type
 
 import numpy as np
 import numpy.typing as npt
+import pandas as pd
 
 from scratchboost.histogram import HistogramData
-
 from scratchboost.node import TreeNode
-from scratchboost.utils import cover, gain, weight, SplitInfo, bin_data
-from scratchboost.splitter import Splitter, HistogramSplitter
+from scratchboost.splitter import HistogramSplitter, Splitter
+from scratchboost.utils import SplitInfo, bin_data, cover, gain, weight
 
 # https://arxiv.org/pdf/1603.02754.pdf
 # https://github.com/Ekeany/XGBoost-From-Scratch/blob/master/XGBoost.py
@@ -67,7 +67,7 @@ class Booster:
         min_leaf_weight: float = 0,
         learning_rate: float = 0.3,
         base_score: float = 0.5,
-        nbins: int = 250,
+        nbins: int | None = 250,
     ):
         self.obj = objective()
         self.iterations = iterations
@@ -93,6 +93,10 @@ class Booster:
         y: np.ndarray,
         sample_weight: Optional[np.ndarray] = None,
     ) -> Booster:
+        if isinstance(X, pd.DataFrame):
+            X = X.to_numpy()
+        if isinstance(y, pd.Series):
+            y = y.to_numpy()
         if sample_weight is None:
             sample_weight_ = np.ones(y.shape)
         else:
@@ -125,6 +129,8 @@ class Booster:
         return self
 
     def predict(self, X: npt.NDArray[np.float_]) -> np.ndarray:
+        if isinstance(X, pd.DataFrame):
+            X = X.to_numpy()
         preds_ = np.repeat(self.base_score, X.shape[0])
         for t in self.trees_:
             preds_ += t.predict(X)

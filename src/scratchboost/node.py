@@ -1,6 +1,6 @@
-import numpy as np
-
 import typing
+
+import numpy as np
 
 from scratchboost.histogram import HistogramData
 from scratchboost.utils import SplitInfo

@@ -1,7 +1,10 @@
 from __future__ import annotations
+
 import numpy as np
-from scratchboost.utils import bin_data
 import pytest
+
+from scratchboost.utils import bin_data
+
 
 @pytest.mark.parametrize("nbins", range(25, 300, 25))
 def test_binning(nbins: int, X_y: tuple[np.ndarray, np.ndarray]) -> None:
@@ -9,4 +12,4 @@ def test_binning(nbins: int, X_y: tuple[np.ndarray, np.ndarray]) -> None:
     b, c = bin_data(X, nbins)
 
     for i in range(X.shape[1]):
-        assert all(X[:,i] < c[i][b[:,i]])
+        assert all(X[:, i] < c[i][b[:, i]])

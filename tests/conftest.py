@@ -1,7 +1,9 @@
 from __future__ import annotations
-import seaborn
-import pytest
+
 import numpy as np
+import pytest
+import seaborn
+
 
 @pytest.fixture(scope="session")
 def X_y() -> tuple[np.ndarray, np.ndarray]:

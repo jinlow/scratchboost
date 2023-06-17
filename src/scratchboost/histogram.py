@@ -10,8 +10,12 @@ def create_histogram(
     gradient: npt.NDArray[np.float32],
     hessian: npt.NDArray[np.float32],
 ) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
-    gradient_bins = np.bincount(feature, weights=gradient, minlength=feature_len).astype(np.float32)
-    hessian_bins = np.bincount(feature, weights=hessian, minlength=feature_len).astype(np.float32)
+    gradient_bins = np.bincount(
+        feature, weights=gradient, minlength=feature_len
+    ).astype(np.float32)
+    hessian_bins = np.bincount(feature, weights=hessian, minlength=feature_len).astype(
+        np.float32
+    )
     return gradient_bins, hessian_bins
 
 
@@ -35,7 +39,12 @@ class HistogramData:
         hd = cls()
         for i in range(X.shape[1]):
             hd.histograms.append(
-                create_histogram(X[:, i], feature_len=feature_cuts[i].shape[0], gradient=gradient, hessian=hessian)
+                create_histogram(
+                    X[:, i],
+                    feature_len=feature_cuts[i].shape[0],
+                    gradient=gradient,
+                    hessian=hessian,
+                )
             )
         return hd
 
