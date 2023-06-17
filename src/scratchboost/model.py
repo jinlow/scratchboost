@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from abc import ABC, abstractstaticmethod
 from optparse import Option
-from typing import Any, List, Optional, Tuple, Type
+from typing import Any, List, Optional, Tuple, Type, TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
 
 from scratchboost.histogram import HistogramData
+
+from scratchboost.node import TreeNode
+from scratchboost.utils import cover, gain, weight, SplitInfo, bin_data
+from scratchboost.splitter import Splitter, HistogramSplitter
 
 # https://arxiv.org/pdf/1603.02754.pdf
 # https://github.com/Ekeany/XGBoost-From-Scratch/blob/master/XGBoost.py
@@ -76,10 +80,16 @@ class Booster:
         self.base_score = base_score
         self.nbins = nbins
         self.trees_: List[Tree] = []
+        self.splitter = HistogramSplitter(
+            learning_rate=self.learning_rate,
+            l2=self.l2,
+            gamma=self.gamma,
+            min_leaf_weight=min_leaf_weight,
+        )
 
     def fit(
         self,
-        X: npt.NDArray[np.int_],
+        X: npt.NDArray[np.float_],
         y: np.ndarray,
         sample_weight: Optional[np.ndarray] = None,
     ) -> Booster:
@@ -90,6 +100,7 @@ class Booster:
         preds_ = np.repeat(self.base_score, repeats=X.shape[0])
         gradient_ = self.obj.grad(y=y, y_hat=preds_) * sample_weight_
         hessian_ = self.obj.hess(y=y, y_hat=preds_) * sample_weight_
+        X_binned, feature_cuts = bin_data(X, self.nbins)
         for _ in range(self.iterations):
             t = Tree(
                 l2=self.l2,
@@ -99,13 +110,21 @@ class Booster:
                 min_leaf_weight=self.min_leaf_weight,
                 learning_rate=self.learning_rate,
             )
-            self.trees_.append(t.fit(X=X, gradient=gradient_, hessian=hessian_))
+            self.trees_.append(
+                t.fit(
+                    X_binned=X_binned,
+                    feature_cuts=feature_cuts,
+                    gradient=gradient_,
+                    hessian=hessian_,
+                    splitter=self.splitter,
+                )
+            )
             preds_ += t.predict(X=X)
             gradient_ = self.obj.grad(y=y, y_hat=preds_) * sample_weight_
             hessian_ = self.obj.hess(y=y, y_hat=preds_) * sample_weight_
         return self
 
-    def predict(self, X: npt.NDArray[np.int_]) -> np.ndarray:
+    def predict(self, X: npt.NDArray[np.float_]) -> np.ndarray:
         preds_ = np.repeat(self.base_score, X.shape[0])
         for t in self.trees_:
             preds_ += t.predict(X)
@@ -157,27 +176,43 @@ class Tree:
             else:
                 node_idx = n.right_child_
 
-    def predict(self, X: npt.NDArray[np.int_]) -> np.ndarray:
+    def predict(self, X: npt.NDArray[np.float_]) -> np.ndarray:
         preds_ = np.ndarray((X.shape[0],))
         for i in range(X.shape[0]):
             preds_[i] = self.predict_row(X[i, :])
         return preds_
 
     def fit(
-        self, X: npt.NDArray[np.int_], gradient: np.ndarray, hessian: np.ndarray
+        self,
+        X_binned: npt.NDArray[np.int_],
+        feature_cuts: list[npt.NDArray[np.float_]],
+        gradient: np.ndarray,
+        hessian: np.ndarray,
+        splitter: HistogramSplitter,
     ) -> Tree:
         self.nodes_ = []
         gradient_sum = gradient.sum()
         hessian_sum = hessian.sum()
-        root_gain = self.gain(gradient_sum=gradient_sum, hessian_sum=hessian_sum)
-        root_weight = self.weight(gradient_sum=gradient_sum, hessian_sum=hessian_sum)
+        root_gain = gain(gradient_sum=gradient_sum, hessian_sum=hessian_sum, l2=self.l2)
+        root_weight = weight(
+            gradient_sum=gradient_sum,
+            hessian_sum=hessian_sum,
+            l2=self.l2,
+            learning_rate=self.learning_rate,
+        )
         root_node = TreeNode(
             num=0,
-            node_idxs=np.arange(X.shape[0]),
+            node_idxs=np.arange(X_binned.shape[0]),
             depth=0,
             weight_value=root_weight,
             gain_value=root_gain,
             cover_value=hessian_sum,
+        )
+        root_node.histograms_ = HistogramData.from_records(
+            X=X_binned,
+            feature_cuts=feature_cuts,
+            gradient=gradient,
+            hessian=hessian,
         )
         self.nodes_.append(root_node)
         n_leaves = 1
@@ -205,11 +240,11 @@ class Tree:
             n_leaves -= 1
 
             # Try to find a valid split for this node.
-            split_info = self.best_split(
+            split_info = splitter.best_split(
                 node=n,
-                X=X,
-                gradient=gradient,
-                hessian=hessian,
+                gradient_sum=gradient[n.node_idxs].sum(),
+                hessian_sum=hessian[n.node_idxs].sum(),
+                feature_cuts=feature_cuts,
             )
             # If this is None, this means there
             # are no more valid nodes.
@@ -238,8 +273,36 @@ class Tree:
                 cover_value=split_info.right_cover,
                 depth=depth,
             )
+            mask = (
+                X_binned[n.node_idxs, split_info.split_feature] < split_info.split_index
+            )
+            left_node_idxs, right_node_idxs = n.node_idxs[mask], n.node_idxs[~mask]
+            left_node.node_idxs = left_node_idxs
+            right_node.node_idxs = right_node_idxs
+
+            # Compute the histogram for the smalles node..
+            if left_node_idxs.shape[0] < right_node_idxs.shape[0]:
+                left_hist = HistogramData.from_records(
+                    X_binned[left_node_idxs, :],
+                    feature_cuts=feature_cuts,
+                    gradient=gradient[left_node_idxs],
+                    hessian=hessian[left_node_idxs],
+                )
+                right_hist = HistogramData.from_parent_child(n.histograms_, left_hist)
+            else:
+                right_hist = HistogramData.from_records(
+                    X_binned[right_node_idxs, :],
+                    feature_cuts=feature_cuts,
+                    gradient=gradient[right_node_idxs],
+                    hessian=hessian[right_node_idxs],
+                )
+                left_hist = HistogramData.from_parent_child(n.histograms_, right_hist)
+            left_node.histograms_ = left_hist
+            right_node.histograms_ = right_hist
+
             self.nodes_.append(left_node)
             self.nodes_.append(right_node)
+            # Get indexes
             n.update_children(
                 left_child=left_idx, right_child=right_idx, split_info=split_info
             )
@@ -248,247 +311,53 @@ class Tree:
 
         return self
 
-    def best_split(
-        self,
-        node: TreeNode,
-        X: npt.NDArray[np.int_],
-        gradient: np.ndarray,
-        hessian: np.ndarray,
-    ) -> Optional[SplitInfo]:
-        """
-        Find the best split for this node out of all the features.
-        """
-        X_ = X[node.node_idxs, :]
-        gradient_ = gradient[node.node_idxs]
-        hessian_ = hessian[node.node_idxs]
 
-        # Split info
-        best_gain = -np.inf
-        best_split_info = None
-
-        for f in range(X_.shape[1]):
-            split_info = self.best_feature_split(
-                node=node,
-                X=X_,
-                feature=f,
-                gradient=gradient_,
-                hessian=hessian_,
-            )
-
-            if split_info is None:
-                continue
-
-            if split_info.split_gain > best_gain:
-                best_gain = split_info.split_gain
-                best_split_info = split_info
-        return best_split_info
-
-    def best_feature_split(
-        self,
-        node: TreeNode,
-        X: npt.NDArray[np.int_],
-        feature: int,
-        gradient: np.ndarray,
-        hessian: np.ndarray,
-    ) -> Optional[SplitInfo]:
-        """
-        Find the best split for a given feature, if it is
-        possible to create a split with this feature.
-        """
-        max_gain = -np.inf
-        split_info = None
-
-        # Skip the first value, because nothing is smaller
-        # than the first value.
-        x = X[:, feature]
-        split_vals = np.unique(x)
-        for v in split_vals[1:]:
-            mask = x < v
-            lidxs, ridxs = node.node_idxs[mask], node.node_idxs[~mask]
-            lgs, lhs = gradient[mask].sum(), hessian[mask].sum()
-            rgs, rhs = gradient[~mask].sum(), hessian[~mask].sum()
-            # Don't even consider this if the min_leaf_weight
-            # parameter is violated.
-            if np.min([lhs, rhs]) < self.min_leaf_weight:
-                continue
-            l_gain = self.gain(lgs, lhs)
-            r_gain = self.gain(rgs, rhs)
-            split_gain = (l_gain + r_gain - node.gain_value) - self.gamma
-            if split_gain <= 0:
-                continue
-            if split_gain > max_gain:
-                max_gain = split_gain
-                split_info = SplitInfo(
-                    split_gain=split_gain,
-                    split_feature=feature,
-                    split_value=v,
-                    left_gain=l_gain,
-                    left_cover=lhs,
-                    left_weight=self.weight(gradient_sum=lgs, hessian_sum=lhs),
-                    left_idxs=lidxs,
-                    right_gain=r_gain,
-                    right_cover=rhs,
-                    right_weight=self.weight(gradient_sum=rgs, hessian_sum=rhs),
-                    right_idxs=ridxs,
-                )
-        return split_info
-
-    def cover(
-        self,
-        hessian: np.ndarray,
-    ) -> float:
-        return hessian.sum()
-
-    def gain(
-        self,
-        gradient_sum: float,
-        hessian_sum: float,
-    ) -> float:
-        return (gradient_sum**2) / (hessian_sum + self.l2)
-
-    def weight(self, gradient_sum: float, hessian_sum: float) -> float:
-        return -1 * (gradient_sum / (hessian_sum + self.l2)) * self.learning_rate
+# def split_gain(
+#     left_mask: np.ndarray,
+#     right_mask: np.ndarray,
+#     gradient: np.ndarray,
+#     hessian: np.ndarray,
+#     l2: float,
+#     gamma: float,
+# ) -> float:
+#     gl = gradient[left_mask].sum()
+#     gr = gradient[right_mask].sum()
+#     hl = hessian[left_mask].sum()
+#     hr = hessian[right_mask].sum()
+#     l = (gl**2) / (hl + l2)
+#     r = (gr**2) / (hr + l2)
+#     lr = ((gl + gr) ** 2) / (hl + hr + l2)
+#     return (l + r - lr) - gamma
 
 
-from dataclasses import dataclass
+# def missing_gain(
+#     left_mask: np.ndarray,
+#     right_mask: np.ndarray,
+#     missing_mask: np.ndarray,
+#     gradient: np.ndarray,
+#     hessian: np.ndarray,
+#     l2: float,
+#     gamma: float,
+# ) -> Tuple[float, float]:
+#     gl = gradient[left_mask].sum()
+#     gr = gradient[right_mask].sum()
+#     gm = gradient[missing_mask].sum()
+#     hl = hessian[left_mask].sum()
+#     hr = hessian[right_mask].sum()
+#     hm = hessian[missing_mask].sum()
+#     l = (gl**2) / (hl + l2)
+#     lm = ((gl + gm) ** 2) / (hl + hm + l2)
+#     r = (gr**2) / (hr + l2)
+#     rm = ((gr + gm) ** 2) / (hr + hm + l2)
+#     lrm = ((gl + gr + gm) ** 2) / (hl + hr + hm + l2)
+#     gain_left = (lm + r - lrm) - gamma
+#     gain_right = (l + rm - lrm) - gamma
+#     return (gain_left, gain_right)
 
 
-@dataclass
-class SplitInfo:
-    split_gain: float
-    split_feature: int
-    split_value: Any
-
-    left_gain: float
-    left_cover: float
-    left_weight: float
-    left_idxs: np.ndarray
-
-    right_gain: float
-    right_cover: float
-    right_weight: float
-    right_idxs: np.ndarray
-
-
-class TreeNode:
-    """Node of the tree, this determines the split, or if this
-    is a terminal node value.
-    """
-
-    def __init__(
-        self,
-        num: int,
-        node_idxs: np.ndarray,
-        weight_value: float,
-        gain_value: float,
-        cover_value: float,
-        depth: int,
-    ):
-        self.num = num
-        self.node_idxs = node_idxs
-
-        self.weight_value = weight_value
-        self.gain_value = gain_value
-        self.cover_value = cover_value
-        self.depth = depth
-
-        self.split_value_: Optional[float] = None
-        self.split_feature_: Optional[float] = None
-        self.split_gain_: Optional[float] = None
-        self.left_child_: Optional[int] = None
-        self.right_child_: Optional[int] = None
-        self.histograms: Optional[HistogramData] = None
-
-    def __repr__(self) -> str:
-        if self.is_leaf:
-            n = f"{repr(self.num)}:leaf={repr(self.weight_value)},cover={repr(self.cover_value)}"
-        else:
-            n = f"{repr(self.num)}:[{repr(self.split_feature_)} < {repr(self.split_value_)}] yes={repr(self.left_child_)},no={repr(self.right_child_)},gain={repr(self.split_gain_)},cover={repr(self.cover_value)}"
-        return n
-
-    def print_node(self):
-        return (
-            "TreeNode{\n"
-            + f"\tweight_value: {self.weight_value}\n"
-            + f"\tgain_value: {self.gain_value}\n"
-            + f"\tcover_value: {self.cover_value}\n"
-            + f"\tdepth: {self.depth}\n"
-            + f"\tsplit_value_: {self.split_value_}\n"
-            + f"\tsplit_feature_: {self.split_feature_}\n"
-            + f"\tsplit_gain_: {self.split_gain_}\n"
-            + f"\tleft_child_: {self.left_child_}\n"
-            + f"\tright_child_: {self.right_child_}\n"
-            + "        }"
-        )
-
-    @property
-    def is_leaf(self):
-        return self.split_feature_ is None
-
-    def update_children(
-        self,
-        left_child: int,
-        right_child: int,
-        split_info: SplitInfo,
-    ):
-        """
-        Update the children, and split information for the node.
-        """
-        self.left_child_ = left_child
-        self.right_child_ = right_child
-        self.split_feature_ = split_info.split_feature
-        self.split_gain_ = (
-            split_info.left_gain + split_info.right_gain - self.gain_value
-        )
-        self.split_value_ = split_info.split_value
-
-
-def split_gain(
-    left_mask: np.ndarray,
-    right_mask: np.ndarray,
-    gradient: np.ndarray,
-    hessian: np.ndarray,
-    l2: float,
-    gamma: float,
-) -> float:
-    gl = gradient[left_mask].sum()
-    gr = gradient[right_mask].sum()
-    hl = hessian[left_mask].sum()
-    hr = hessian[right_mask].sum()
-    l = (gl**2) / (hl + l2)
-    r = (gr**2) / (hr + l2)
-    lr = ((gl + gr) ** 2) / (hl + hr + l2)
-    return (l + r - lr) - gamma
-
-
-def missing_gain(
-    left_mask: np.ndarray,
-    right_mask: np.ndarray,
-    missing_mask: np.ndarray,
-    gradient: np.ndarray,
-    hessian: np.ndarray,
-    l2: float,
-    gamma: float,
-) -> Tuple[float, float]:
-    gl = gradient[left_mask].sum()
-    gr = gradient[right_mask].sum()
-    gm = gradient[missing_mask].sum()
-    hl = hessian[left_mask].sum()
-    hr = hessian[right_mask].sum()
-    hm = hessian[missing_mask].sum()
-    l = (gl**2) / (hl + l2)
-    lm = ((gl + gm) ** 2) / (hl + hm + l2)
-    r = (gr**2) / (hr + l2)
-    rm = ((gr + gm) ** 2) / (hr + hm + l2)
-    lrm = ((gl + gr + gm) ** 2) / (hl + hr + hm + l2)
-    gain_left = (lm + r - lrm) - gamma
-    gain_right = (l + rm - lrm) - gamma
-    return (gain_left, gain_right)
-
-
-def weight(
-    gradient: np.ndarray,
-    hessian: np.ndarray,
-    l2: float,
-) -> float:
-    return -1 * (gradient.sum() / (hessian.sum() + l2))
+# def weight(
+#     gradient: np.ndarray,
+#     hessian: np.ndarray,
+#     l2: float,
+# ) -> float:
+#     return -1 * (gradient.sum() / (hessian.sum() + l2))
