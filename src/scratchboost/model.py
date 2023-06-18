@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractstaticmethod
-from optparse import Option
-from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Type
+from typing import List, Optional, Type
 
 import numpy as np
 import numpy.typing as npt
@@ -10,8 +9,8 @@ import pandas as pd
 
 from scratchboost.histogram import HistogramData
 from scratchboost.node import TreeNode
-from scratchboost.splitter import HistogramSplitter, Splitter
-from scratchboost.utils import SplitInfo, bin_data, cover, gain, weight
+from scratchboost.splitter import HistogramSplitter
+from scratchboost.utils import bin_data, gain, weight
 
 # https://arxiv.org/pdf/1603.02754.pdf
 # https://github.com/Ekeany/XGBoost-From-Scratch/blob/master/XGBoost.py
@@ -97,6 +96,7 @@ class Booster:
             X = X.to_numpy()
         if isinstance(y, pd.Series):
             y = y.to_numpy()
+
         if sample_weight is None:
             sample_weight_ = np.ones(y.shape)
         else:
@@ -177,10 +177,7 @@ class Tree:
             n = self.nodes_[node_idx]
             if n.is_leaf:
                 return n.weight_value
-            if x_row[n.split_feature_] < n.split_value_:  # type: ignore
-                node_idx = n.left_child_
-            else:
-                node_idx = n.right_child_
+            node_idx = n.get_next_node(x_row[n.split_feature_])
 
     def predict(self, X: npt.NDArray[np.float_]) -> np.ndarray:
         preds_ = np.ndarray((X.shape[0],))
@@ -208,17 +205,19 @@ class Tree:
         )
         root_node = TreeNode(
             num=0,
-            node_idxs=np.arange(X_binned.shape[0]),
             depth=0,
             weight_value=root_weight,
             gain_value=root_gain,
             cover_value=hessian_sum,
         )
-        root_node.histograms_ = HistogramData.from_records(
-            X=X_binned,
-            feature_cuts=feature_cuts,
-            gradient=gradient,
-            hessian=hessian,
+        root_node.prep_for_split(
+            node_idxs=np.arange(X_binned.shape[0]),
+            histograms=HistogramData.from_records(
+                X=X_binned,
+                feature_cuts=feature_cuts,
+                gradient=gradient,
+                hessian=hessian,
+            ),
         )
         self.nodes_.append(root_node)
         n_leaves = 1
@@ -263,28 +262,25 @@ class Tree:
             n_leaves += 2
             left_idx = len(self.nodes_)
             right_idx = left_idx + 1
+
             left_node = TreeNode(
                 num=left_idx,
-                node_idxs=split_info.left_idxs,
-                weight_value=split_info.left_weight,
-                gain_value=split_info.left_gain,
-                cover_value=split_info.left_cover,
+                weight_value=split_info.children_weight[0],
+                gain_value=split_info.children_gain[0],
+                cover_value=split_info.children_cover[0],
                 depth=depth,
             )
             right_node = TreeNode(
                 num=right_idx,
-                node_idxs=split_info.right_idxs,
-                weight_value=split_info.right_weight,
-                gain_value=split_info.right_gain,
-                cover_value=split_info.right_cover,
+                weight_value=split_info.children_weight[1],
+                gain_value=split_info.children_gain[1],
+                cover_value=split_info.children_cover[1],
                 depth=depth,
             )
             mask = (
                 X_binned[n.node_idxs, split_info.split_feature] < split_info.split_index
             )
             left_node_idxs, right_node_idxs = n.node_idxs[mask], n.node_idxs[~mask]
-            left_node.node_idxs = left_node_idxs
-            right_node.node_idxs = right_node_idxs
 
             # Compute the histogram for the smalles node..
             if left_node_idxs.shape[0] < right_node_idxs.shape[0]:
@@ -303,15 +299,13 @@ class Tree:
                     hessian=hessian[right_node_idxs],
                 )
                 left_hist = HistogramData.from_parent_child(n.histograms_, right_hist)
-            left_node.histograms_ = left_hist
-            right_node.histograms_ = right_hist
 
+            left_node.prep_for_split(node_idxs=left_node_idxs, histograms=left_hist)
+            right_node.prep_for_split(node_idxs=right_node_idxs, histograms=right_hist)
             self.nodes_.append(left_node)
             self.nodes_.append(right_node)
             # Get indexes
-            n.update_children(
-                left_child=left_idx, right_child=right_idx, split_info=split_info
-            )
+            n.add_children(children=[left_idx, right_idx], split_info=split_info)
             growable.insert(0, left_idx)
             growable.insert(0, right_idx)
 

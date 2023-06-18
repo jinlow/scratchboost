@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -11,18 +10,13 @@ import numpy.typing as npt
 class SplitInfo:
     split_gain: float
     split_feature: int
-    split_value: Any
+    split_value: list[float]
     split_index: int
 
-    left_gain: float
-    left_cover: float
-    left_weight: float
-    left_idxs: np.ndarray
-
-    right_gain: float
-    right_cover: float
-    right_weight: float
-    right_idxs: np.ndarray
+    children_gain: list[float]
+    children_cover: list[float]
+    children_weight: list[float]
+    children_bounds: list[tuple[float, float]]
 
 
 def cover(
@@ -61,7 +55,7 @@ def bin_data(
     percentiles = np.linspace(0, 100, num=nbins + 1) if nbins is not None else None
     for i in range(X.shape[1]):
         f = X[:, i]
-        max_ = f.max()
+        f.max()
         p = get_cuts(X[:, i], percentiles)
         XB[:, i] = np.digitize(f, p, right=False)
         cuts_.append(p)
