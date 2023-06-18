@@ -95,7 +95,11 @@ class Booster:
         if isinstance(X, pd.DataFrame):
             X = X.to_numpy()
         if np.any(np.isnan(X)) | np.any(np.isnan(y)):
-            raise ValueError("Missing Values not supported, please impute them with a real value.")
+            e_msg = (
+                "Missing Values not supported, "
+                + "please impute them with a real values."
+            )
+            raise ValueError(e_msg)
         if isinstance(y, pd.Series):
             y = y.to_numpy()
 
@@ -134,7 +138,9 @@ class Booster:
         if isinstance(X, pd.DataFrame):
             X = X.to_numpy()
         if np.any(np.isnan(X)):
-            raise ValueError("Missing Values not supported, please impute them with a real value.")
+            raise ValueError(
+                "Missing Values not supported, please impute them with a real value."
+            )
         preds_ = np.repeat(self.base_score, X.shape[0])
         for t in self.trees_:
             preds_ += t.predict(X)
