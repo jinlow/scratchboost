@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import numpy.typing as npt
+import functools
 
 
 def create_histogram(
@@ -56,5 +57,20 @@ class HistogramData:
     ) -> HistogramData:
         hd = cls()
         for p, c in zip(parent.histograms, child.histograms):
+            hd.histograms.append((p[0] - c[0], p[1] - c[1]))
+        return hd
+
+    @classmethod
+    def from_parent_children(
+        cls,
+        parent: HistogramData,
+        *children: HistogramData,
+    ):
+        hd = cls()
+        children_ = functools.reduce(
+            lambda x, y: (x[0] + y[0], x[1] + y[1]),
+            (c.histograms for c in children),
+        )
+        for p, c in zip(parent.histograms, children_):
             hd.histograms.append((p[0] - c[0], p[1] - c[1]))
         return hd
