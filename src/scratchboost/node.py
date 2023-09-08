@@ -92,20 +92,3 @@ class TreeNode:
         if hasattr(self, "histograms_"):
             del self.histograms_
         del self.node_idxs
-
-    # def update_children(
-    #     self,
-    #     left_child: int,
-    #     right_child: int,
-    #     split_info: SplitInfo,
-    # ):
-    #     """
-    #     Update the children, and split information for the node.
-    #     """
-    #     self.left_child_ = left_child
-    #     self.right_child_ = right_child
-    #     self.split_feature_ = split_info.split_feature
-    #     self.split_gain_ = (
-    #         split_info.left_gain + split_info.right_gain - self.gain_value
-    #     )
-    #     self.split_value_ = split_info.split_value[0]
